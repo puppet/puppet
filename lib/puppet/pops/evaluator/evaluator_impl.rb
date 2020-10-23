@@ -50,9 +50,6 @@ class EvaluatorImpl
   # @api private
   def static_initialize
     @@eval_visitor     ||= Visitor.new(self, "eval", 1, 1)
-    @@lvalue_visitor   ||= Visitor.new(self, "lvalue", 1, 1)
-    @@assign_visitor   ||= Visitor.new(self, "assign", 3, 3)
-    @@string_visitor   ||= Visitor.new(self, "string", 1, 1)
 
     @@type_calculator  ||= Types::TypeCalculator.singleton
 
@@ -137,7 +134,15 @@ class EvaluatorImpl
   # @api private
   #
   def assign(target, value, o, scope)
-    @@assign_visitor.visit_this_3(self, target, value, o, scope)
+    if target.is_a?(String)
+      assign_String(target, value, o, scope)
+    elsif target.is_a?(Array)
+      assign_Array(target, value, o, scope)
+    elsif target.is_a?(Numeric)
+      fail(Issues::ILLEGAL_NUMERIC_ASSIGNMENT, o.left_expr, {:varname => n.to_s})
+    else
+      fail(Issues::ILLEGAL_ASSIGNMENT, o)
+    end
   end
 
   # Computes a value that can be used as the LHS in an assignment.
@@ -147,7 +152,17 @@ class EvaluatorImpl
   # @api private
   #
   def lvalue(o, scope)
-    @@lvalue_visitor.visit_this_1(self, o, scope)
+    if o.is_a?(Model::VariableExpression)
+      if o.expr.instance_of?(Model::QualifiedName)
+        o.expr.value
+      else
+        evaluate(o.expr, scope)
+      end
+    elsif o.is_a?(Model::LiteralList)
+      o.values.map {|x| lvalue(x, scope) }
+    else
+      fail(Issues::ILLEGAL_ASSIGNMENT, o)
+    end
   end
 
   # Produces a String representation of the given object _o_ as used in interpolation.
@@ -157,8 +172,25 @@ class EvaluatorImpl
   # @api public
   #
   def string(o, scope)
-    @@string_visitor.visit_this_1(self, o, scope)
+    if o.instance_of?(String)
+      o
+    elsif o.instance_of?(Symbol)
+      if :undef == o  # optimized comparison 1.44 vs 1.95
+        EMPTY_STRING
+      else
+        o.to_s
+      end
+    elsif o.instance_of?(Regexp)
+      Types::PRegexpType.regexp_to_s_with_delimiters(o)
+    elsif o.instance_of?(Array)
+      "[#{o.map {|e| string(e, scope)}.join(COMMA_SEPARATOR)}]"
+    elsif o.instance_of?(Hash)
+      "{#{o.map {|k,v| "#{string(k, scope)} => #{string(v, scope)}"}.join(COMMA_SEPARATOR)}}"
+    else
+      o.to_s
+    end
   end
+
 
   # Evaluate a BlockExpression in a new scope with variables bound to the
   # given values.
@@ -189,22 +221,6 @@ class EvaluatorImpl
 
   protected
 
-  def lvalue_VariableExpression(o, scope)
-    # evaluate the name
-    evaluate(o.expr, scope)
-  end
-
-  # Catches all illegal lvalues
-  #
-  def lvalue_Object(o, scope)
-    fail(Issues::ILLEGAL_ASSIGNMENT, o)
-  end
-
-  # An array is assignable if all entries are lvalues
-  def lvalue_LiteralList(o, scope)
-    o.values.map {|x| lvalue(x, scope) }
-  end
-
   # Assign value to named variable.
   # The '$' sign is never part of the name.
   # @example In Puppet DSL
@@ -221,16 +237,6 @@ class EvaluatorImpl
     end
     set_variable(name, value, o, scope)
     value
-  end
-
-  def assign_Numeric(n, value, o, scope)
-    fail(Issues::ILLEGAL_NUMERIC_ASSIGNMENT, o.left_expr, {:varname => n.to_s})
-  end
-
-  # Catches all illegal assignment (e.g. 1 = 2, {'a'=>1} = 2, etc)
-  #
-  def assign_Object(name, value, o, scope)
-    fail(Issues::ILLEGAL_ASSIGNMENT, o)
   end
 
   def assign_Array(lvalues, values, o, scope)
@@ -842,7 +848,11 @@ class EvaluatorImpl
       # Store evaluated parameters in a hash associated with the body, but do not yet create resource
       # since the entry containing :defaults may appear later
       body_to_params[body] = body.operations.reduce({}) do |param_memo, op|
-        params = evaluate(op, scope)
+        params = if op.instance_of?(Model::AttributeOperation)
+                   eval_AttributeOperation(op, scope)
+                 else
+                   evaluate(op, scope)
+                 end
         params = [params] unless params.is_a?(Array)
         params.each do |p|
           if param_memo.include? p.name
@@ -875,7 +885,18 @@ class EvaluatorImpl
 
   # Produces 3x parameter
   def eval_AttributeOperation(o, scope)
-    create_resource_parameter(o, scope, o.attribute_name, evaluate(o.value_expr, scope), o.operator)
+    value_expr = o.value_expr
+    value = if value_expr.instance_of?(Model::VariableExpression)
+              eval_VariableExpression(value_expr, scope)
+            elsif value_expr.instance_of?(Model::LiteralString)
+              value_expr.value
+            elsif value_expr.instance_of?(Model::ConcatenatedString)
+              eval_ConcatenatedString(value_expr, scope)
+            else
+              evaluate(value_expr, scope)
+            end
+
+    create_resource_parameter(o, scope, o.attribute_name, value, o.operator)
   end
 
   def eval_AttributesOperation(o, scope)
@@ -1051,7 +1072,11 @@ class EvaluatorImpl
     # Evaluator is not too fussy about what constitutes a name as long as the result
     # is a String and a valid variable name
     #
-    name = evaluate(o.expr, scope)
+    name = if o.expr.instance_of?(Model::QualifiedName)
+             o.expr.value
+           else
+             evaluate(o.expr, scope)
+           end
 
     # Should be caught by validation, but make this explicit here as well, or mysterious evaluation issues
     # may occur for some evaluation use cases.
@@ -1067,7 +1092,17 @@ class EvaluatorImpl
   # Evaluates double quoted strings that may contain interpolation
   #
   def eval_ConcatenatedString o, scope
-    o.segments.collect {|expr| string(evaluate(expr, scope), scope)}.join
+    o.segments.collect do |expr|
+      string(
+        if expr.instance_of?(Model::LiteralString)
+          expr.value
+        elsif expr.instance_of?(Model::TextExpression)
+          eval_TextExpression(expr, scope)
+        else
+          evaluate(expr, scope)
+        end,
+        scope)
+    end.join
   end
 
 
@@ -1085,36 +1120,14 @@ class EvaluatorImpl
     if o.expr.is_a?(Model::QualifiedName)
       string(get_variable_value(o.expr.value, o, scope), scope)
     else
-      string(evaluate(o.expr, scope), scope)
+      string(
+        if o.expr.instance_of?(Model::VariableExpression)
+          eval_VariableExpression(o.expr, scope)
+        else
+          evaluate(o.expr, scope)
+        end,
+        scope)
     end
-  end
-
-  def string_Object(o, scope)
-    o.to_s
-  end
-
-  def string_Symbol(o, scope)
-    if :undef == o  # optimized comparison 1.44 vs 1.95
-      EMPTY_STRING
-    else
-      o.to_s
-    end
-  end
-
-  def string_Array(o, scope)
-    "[#{o.map {|e| string(e, scope)}.join(COMMA_SEPARATOR)}]"
-  end
-
-  def string_Hash(o, scope)
-    "{#{o.map {|k,v| "#{string(k, scope)} => #{string(v, scope)}"}.join(COMMA_SEPARATOR)}}"
-  end
-
-  def string_Regexp(o, scope)
-    Types::PRegexpType.regexp_to_s_with_delimiters(o)
-  end
-
-  def string_PAnyType(o, scope)
-    o.to_s
   end
 
   # Produces concatenation / merge of x and y.
@@ -1267,7 +1280,13 @@ class EvaluatorImpl
       if x.is_a?(Model::UnfoldExpression)
         result.concat(evaluate(x, scope))
       else
-        result << evaluate(x, scope)
+        result << if x.instance_of?(Model::LiteralString)
+                    x.value
+                  elsif x.instance_of?(Model::VariableExpression)
+                    eval_VariableExpression(x, scope)
+                  else
+                    evaluate(x, scope)
+                  end
       end
     end
     result
