@@ -95,6 +95,42 @@ module Puppet
       end
     end
 
+    class LinuxFHSRunMode < RunMode
+      def conf_dir
+        which_dir("/etc/puppet", "~/.puppetlabs/etc/puppet")
+      end
+
+      def code_dir
+        which_dir("/etc/puppet/code", "~/.puppetlabs/etc/code")
+      end
+
+      def var_dir
+        which_dir("/var/lib/puppet", "~/.puppetlabs/opt/puppet/cache")
+      end
+
+      def public_dir
+        which_dir("/var/lib/puppet/public", "~/.puppetlabs/opt/puppet/public")
+      end
+
+      def run_dir
+        which_dir("/run/puppet", "~/.puppetlabs/var/run")
+      end
+
+      def log_dir
+        which_dir("/var/log/puppet", "~/.puppetlabs/var/log")
+      end
+
+      def pkg_config_path
+        # TODO: not always
+        '/usr/lib64/pkgconfig'
+      end
+
+      def gem_cmd
+        # TODO: not always
+        '/usr/bin/gem'
+      end
+    end
+
     class WindowsRunMode < RunMode
       def conf_dir
         which_dir(File.join(windows_common_base("puppet/etc")), "~/.puppetlabs/etc/puppet")
