@@ -63,8 +63,13 @@ module Puppet
     def insync?(currentvalue)
       if [:nochange, :notlink].include?(self.should) or @resource.recurse?
         return true
-      elsif ! @resource.replace? and Puppet::FileSystem.exist?(@resource[:path])
-        return true
+      elsif ! @resource.replace?
+        begin
+          Puppet::FileSystem.lstat(@resource[:path])
+          return true
+        rescue Errno::ENOENT
+          return false
+        end
       else
         return super(currentvalue)
       end
