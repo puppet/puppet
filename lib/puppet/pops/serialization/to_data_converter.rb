@@ -14,6 +14,7 @@ module Serialization
     # @option options [Boolean] :local_reference use local references instead of duplicating complex entries
     # @option options [Boolean] :type_by_reference `true` if Object types are converted to references rather than embedded.
     # @option options [Boolean] :symbol_as_string `true` if Symbols should be converted to strings (with type loss)
+    # @option options [Boolean] :force_symbol `true` if Symbols should not be converted (rich_data and symbol_as_string must be false)
     # @option options [String] :message_prefix String to prepend to in warnings and errors
     # @return [Data] the processed result. An object assignable to `Data`.
     #
@@ -40,6 +41,9 @@ module Serialization
 
       @symbol_as_string = options[:symbol_as_string]
       @symbol_as_string = false if @symbol_as_string.nil?
+
+      @force_symbol = options[:force_symbol]
+      @force_symbol = false if @force_symbol.nil?
 
       @rich_data = options[:rich_data]
       @rich_data = false if @rich_data.nil?
@@ -92,7 +96,11 @@ module Serialization
         elsif @rich_data
           { PCORE_TYPE_KEY => PCORE_TYPE_SYMBOL, PCORE_VALUE_KEY => value.to_s }
         else
-          unknown_to_string_with_warning(value)
+          if @force_symbol
+            value
+          else
+            unknown_to_string_with_warning(value)
+          end
         end
       elsif value.instance_of?(Array)
         process(value) do
