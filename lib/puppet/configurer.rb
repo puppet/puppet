@@ -294,18 +294,18 @@ class Puppet::Configurer
       end
 
       configured_environment = Puppet[:environment] if Puppet.settings.set_by_config?(:environment)
+      node = nil
 
       # We only need to find out the environment to run in if we don't already have a catalog
       unless (cached_catalog || options[:catalog] || Puppet[:strict_environment_mode])
         begin
-          node = nil
           node_retr_time = thinmark do
             node = Puppet::Node.indirection.find(Puppet[:node_name_value],
               :environment => Puppet::Node::Environment.remote(@environment),
               :configured_environment => configured_environment,
               :ignore_cache => true,
               :transaction_uuid => @transaction_uuid,
-              :fail_on_404 => true)
+              :fail_on_404 => false)
           end
           options[:report].add_times(:node_retrieval, node_retr_time)
 
@@ -356,7 +356,13 @@ class Puppet::Configurer
         )
       end
 
+
+      temp_value = options[:pluginsync]
+      options[:pluginsync] = valid_server_environment?
+
       query_options, facts = get_facts(options) unless query_options
+      options[:pluginsync] = temp_value
+
       query_options[:configured_environment] = configured_environment
       options[:convert_for_node] = node
 
@@ -455,6 +461,18 @@ class Puppet::Configurer
     Puppet.pop_context
   end
   private :run_internal
+
+  def valid_server_environment?
+    session = Puppet.lookup(:http_session)
+    fs = session.route_to(:fileserver)
+    begin
+      response = fs.get_file_metadata(path: '/plugins', environment: @environment)
+      return response[0].success?
+    rescue => detail
+      Puppet.debug _("Environment %{environment} not found on server. Skipping pluginsync. Error detail: ${detail}") % {environment: @environment, detail: detail}
+      return false
+    end
+  end
 
   def find_functional_server
     begin
@@ -560,6 +578,7 @@ class Puppet::Configurer
           # don't update cache until after environment converges
           :ignore_cache_save => true,
           :environment       => Puppet::Node::Environment.remote(@environment),
+          :check_environment => true,
           :fail_on_404       => true,
           :facts_for_catalog => facts
         )

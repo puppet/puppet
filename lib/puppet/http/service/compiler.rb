@@ -385,4 +385,8 @@ class Puppet::HTTP::Service::Compiler < Puppet::HTTP::Service
 
     response
   end
+
+  def require_environment?
+    false
+  end
 end

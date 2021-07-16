@@ -59,7 +59,8 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
     # the first field is always nil because of the leading slash,
     indirection_type, version, indirection_name, key = uri.split("/", 5)[1..-1]
     url_prefix = "/#{indirection_type}/#{version}"
-    environment = params.delete(:environment)
+    indirection = Puppet::Indirector::Indirection.instance(indirection_name.to_sym)
+    environment = params.delete(:environment) if !indirection.nil? && indirection.terminus.require_environment?
 
     if indirection_name !~ /^\w+$/
       raise Puppet::Network::HTTP::Error::HTTPBadRequestError.new(
@@ -76,7 +77,6 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
         _("Indirection '%{indirection_name}' does not match url prefix '%{url_prefix}'") % { indirection_name: indirection_name, url_prefix: url_prefix })
     end
 
-    indirection = Puppet::Indirector::Indirection.instance(indirection_name.to_sym)
     if !indirection
       raise Puppet::Network::HTTP::Error::HTTPNotFoundError.new(
         _("Could not find indirection '%{indirection_name}'") % { indirection_name: indirection_name },
@@ -105,7 +105,7 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
       raise Puppet::Network::HTTP::Error::HTTPNotAuthorizedError.new(e.message)
     end
 
-    if configured_environment.nil?
+    if configured_environment.nil? && indirection.terminus.require_environment?
       raise Puppet::Network::HTTP::Error::HTTPNotFoundError.new(
         _("Could not find environment '%{environment}'") % { environment: environment })
     end
