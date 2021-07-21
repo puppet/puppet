@@ -14,7 +14,7 @@ module Puppet
         if Puppet::Util::Platform.windows?
           @run_modes[name] ||= WindowsRunMode.new(name)
         else
-          @run_modes[name] ||= UnixRunMode.new(name)
+          @run_modes[name] ||= LinuxFHSRunMode.new(name)
         end
       end
 
@@ -85,6 +85,50 @@ module Puppet
       def log_dir
         which_dir("/var/log/puppetlabs/puppet", "~/.puppetlabs/var/log")
       end
+
+      def pkg_config_path
+        '/opt/puppetlabs/puppet/lib/pkgconfig'
+      end
+
+      def gem_cmd
+        '/opt/puppetlabs/puppet/bin/gem'
+      end
+    end
+
+    class LinuxFHSRunMode < RunMode
+      def conf_dir
+        which_dir("/etc/puppet", "~/.puppetlabs/etc/puppet")
+      end
+
+      def code_dir
+        which_dir("/etc/puppet/code", "~/.puppetlabs/etc/code")
+      end
+
+      def var_dir
+        which_dir("/var/lib/puppet", "~/.puppetlabs/opt/puppet/cache")
+      end
+
+      def public_dir
+        which_dir("/var/lib/puppet/public", "~/.puppetlabs/opt/puppet/public")
+      end
+
+      def run_dir
+        which_dir("/run/puppet", "~/.puppetlabs/var/run")
+      end
+
+      def log_dir
+        which_dir("/var/log/puppet", "~/.puppetlabs/var/log")
+      end
+
+      def pkg_config_path
+        # TODO: not always
+        '/usr/lib64/pkgconfig'
+      end
+
+      def gem_cmd
+        # TODO: not always
+        '/usr/bin/gem'
+      end
     end
 
     class WindowsRunMode < RunMode
@@ -110,6 +154,19 @@ module Puppet
 
       def log_dir
         which_dir(File.join(windows_common_base("puppet/var/log")), "~/.puppetlabs/var/log")
+      end
+
+      def pkg_config_path
+        nil
+      end
+
+      def gem_cmd
+        puppet_dir = Puppet::Util.get_env('PUPPET_DIR')
+        if puppet_dir
+          File.join(Puppet::Util.get_env('PUPPET_DIR').to_s, 'bin', 'gem.bat')
+        else
+          File.join(Gem.default_bindir, 'gem.bat')
+        end
       end
 
     private
