@@ -1689,6 +1689,26 @@ EOT
         new configurations, where you want to fix the broken configuration
         rather than reverting to a known-good one.",
     },
+    :max_toplevelfacts => {
+      :default    => 0,
+      :type       => :integer,
+      :desc       => "The maximum number of top level facts allowed.",
+    },
+    :max_numberoffacts => {
+      :default    => 0,
+      :type       => :integer,
+      :desc       => "The maximum number of facts allowed.",
+    },
+    :max_factnamelength => {
+      :default    => 0,
+      :type       => :integer,
+      :desc       => "The maximum length a fact name is allowed to have.",
+    },
+    :max_factvaluelength => {
+      :default    => 0,
+      :type       => :integer,
+      :desc       => "The maximum length a fact value is allowed to have.",
+    },
     :use_cached_catalog => {
       :default    => false,
       :type       => :boolean,

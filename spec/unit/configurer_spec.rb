@@ -149,6 +149,63 @@ describe Puppet::Configurer do
       expect(report.host).to eq('node_name_from_fact')
     end
 
+    it "should warn the user when the fact value length limits are exceeded" do
+      Puppet[:max_factnamelength] = -1
+      Puppet[:max_factvaluelength] = 1
+      Puppet[:max_toplevelfacts] = -1
+
+      facts.values = { 'processors' => {
+        'cores' => 1,
+        'count' => 2,
+        'isa' => "i386",
+        'models' => [
+          "CPU1 @ 2.80GHz"
+        ],
+        'physicalcount' => 4 }
+      }
+      Puppet::Node::Facts.indirection.save(facts)
+
+      expect(Puppet).to receive(:warning).with(/Fact '.+' with value '.+' and the value length: '[1-9]*' exceeds the value length limit: [1-9]*/).twice
+      configurer.run
+    end
+
+    it "should warn the user when the fact size limits are exceeded" do
+      Puppet[:max_factnamelength] = -1
+      Puppet[:max_factvaluelength] = -1
+      Puppet[:max_toplevelfacts] = 1
+
+      facts.values = {'my_new_fact_name' => 'my_new_fact_value',
+                      'my_new_fact_name2' => 'my_new_fact_value2'}
+      Puppet::Node::Facts.indirection.save(facts)
+
+      expect(Puppet).to receive(:warning).with(/The current fact size: [1-9]* exceeds the number of top facts limit: [1-9]*/)
+      configurer.run
+    end
+
+    it "should warn the user when the fact name length limits are exceeded" do
+      Puppet[:max_factnamelength] = 1
+      Puppet[:max_factvaluelength] = -1
+      Puppet[:max_toplevelfacts] = -1
+
+      facts.values = {'my_new_fact_name' => 'my_new_fact_value'}
+      Puppet::Node::Facts.indirection.save(facts)
+
+      expect(Puppet).to receive(:warning).with(/Fact .+ with length: '[1-9]*' exceedes the length limit: [1-9]*/)
+      configurer.run
+    end
+
+    it "shouldn't warn the user when the fact limit settings are set to -1" do
+      Puppet[:max_factnamelength] = -1
+      Puppet[:max_factvaluelength] = -1
+      Puppet[:max_toplevelfacts] = -1
+
+      facts.values = {'my_new_fact_name' => 'my_new_fact_value'}
+      Puppet::Node::Facts.indirection.save(facts)
+
+      expect(Puppet).not_to receive(:warning)
+      configurer.run
+    end
+
     it "creates a new report when applying the catalog" do
       options = {}
       configurer.run(options)

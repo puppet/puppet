@@ -5,6 +5,17 @@ require 'securerandom'
 #require 'puppet/parser/script_compiler'
 require_relative '../puppet/pops/evaluator/deferred_resolver'
 
+# max fact name length in bytes
+MAX_FACT_NAME_LENGTH = 512
+# max fact value length in bytes
+MAX_FACT_VALUE_LENGTH = 512
+# max fact top level facts
+MAX_TOP_LEVEL_FACTS = 250
+# max fact top level facts
+MAX_NUMBER_OF_FACTS = 1000
+# max fact top level facts
+MAX_PAYLOAD = 2713
+
 class Puppet::Configurer
   require_relative 'configurer/fact_handler'
   require_relative 'configurer/plugin_handler'
@@ -126,6 +137,89 @@ class Puppet::Configurer
     catalog
   end
 
+  def warn_number_of_facts(size, max_number)
+    Puppet.warning _("The current total nubmer of facts: %{size} exceeds the number of facts limit: %{max_size}") % { size: size, max_size: max_number }
+  end
+
+  def warn_fact_name_length(name, max_length)
+    Puppet.warning _("Fact %{name} with length: '%{length}' exceedes the length limit: %{limit}") % { name: name, length: name.to_s.bytesize, limit: max_length }
+  end
+
+  def warn_number_of_top_level_facts(size, max_number)
+    Puppet.warning _("The current number of top level facts: %{size} exceeds the number of top facts limit: %{max_size}") % { size: size, max_size: max_number }
+  end
+
+  def warn_fact_value_length(value, max_length)
+    Puppet.warning _("Fact value '%{value}' with the value length: '%{length}' exceeds the value length limit: %{max_length}") % { value: value, length:value.to_s.bytesize, max_length: max_length }
+  end
+
+  def check_fact_name_length(name, number_of_dots)
+    max_length = Puppet[:max_factnamelength]
+    return if max_length == -1
+
+    max_length = MAX_FACT_NAME_LENGTH if max_length == 0
+    # rough byte size estimations of fact path as a postgresql btree index 
+    size_as_btree_index = 8 + (number_of_dots * 2) + name.to_s.bytesize
+    warn_fact_name_length(name, max_length) if size_as_btree_index > max_length
+  end
+
+  def check_fact_values_length(values)
+    max_length = Puppet[:max_factvaluelength]
+    return if max_length == -1
+
+    max_length = MAX_FACT_VALUE_LENGTH if max_length == 0
+    warn_fact_value_length(values, max_length) if values.to_s.bytesize > max_length
+  end
+
+  def check_top_level_number_limit(size)
+    max_size = Puppet[:max_toplevelfacts]
+    return if max_size == -1
+
+    max_size = MAX_TOP_LEVEL_FACTS if max_size == 0
+    warn_number_of_top_level_facts(size, max_size) if size > max_size
+  end
+
+  def check_total_number_limit(size)
+    max_size = Puppet[:max_numberoffacts]
+    return if max_size == -1
+
+    max_size = MAX_NUMBER_OF_FACTS if max_size == 0
+    puts max_size
+    puts size
+    warn_number_of_facts(size, max_size) if size > max_size
+  end
+
+  def parse_fact_name_and_value_limits(object, path = [])
+    case object
+    when Hash
+      object.each do |key, value|
+        path.push(key)
+        puts path.inspect
+        parse_fact_name_and_value_limits(value, path)
+        path.pop
+      end
+    when Array
+      object.each_with_index do |e, idx|
+        path.push(idx)
+        puts path.inspect
+        parse_fact_name_and_value_limits(e, path)
+        path.pop
+      end
+    else
+      check_fact_name_length(path.join(), path.size)
+      check_fact_values_length(object)
+      puts path.inspect
+    end
+end
+
+  def parse_fact_limits(facts)
+    @number_of_facts = 0
+    check_top_level_number_limit(facts.size)
+
+    parse_fact_name_and_value_limits(facts)
+    check_total_number_limit(@number_of_facts)
+  end
+
   def get_facts(options)
     if options[:pluginsync]
       plugin_sync_time = thinmark do
@@ -148,6 +242,7 @@ class Puppet::Configurer
       # facts_for_uploading may set Puppet[:node_name_value] as a side effect
       facter_time = thinmark do
         facts = find_facts
+        parse_fact_limits(facts.to_data_hash['values'])
         facts_hash = encode_facts(facts) # encode for uploading # was: facts_for_uploading
       end
       options[:report].add_times(:fact_generation, facter_time) if options[:report]
